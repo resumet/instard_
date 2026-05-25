@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 36 24% 97%;
+  --foreground: 222 26% 10%;
+  --muted: 210 18% 92%;
+  --muted-foreground: 218 10% 40%;
+  --accent: 174 46% 89%;
+  --accent-foreground: 187 48% 15%;
+  --primary: 350 72% 46%;
+  --primary-foreground: 0 0% 100%;
+  --border: 214 20% 84%;
+  --input: 214 20% 84%;
+  --ring: 350 72% 46%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.72), rgba(255,255,255,.9)),
+    hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+textarea,
+input,
+select {
+  font-size: 16px;
+}
