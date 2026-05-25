@@ -45,17 +45,30 @@ export async function extractAudioMp3(videoUrl: string) {
   }
 }
 
-function runFfmpeg(inputPath: string, outputPath: string) {
+export async function extractAudioWav(videoUrl: string) {
+  await mkdir(workDir, { recursive: true });
+  const id = randomUUID();
+  const inputPath = path.join(workDir, `${id}.mp4`);
+  const outputPath = path.join(workDir, `${id}.wav`);
+
+  try {
+    const { buffer } = await downloadVideoBuffer(videoUrl);
+    await writeFile(inputPath, buffer);
+    await runFfmpeg(inputPath, outputPath, ["-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"]);
+    return await readFile(outputPath);
+  } finally {
+    await rm(inputPath, { force: true }).catch(() => undefined);
+    await rm(outputPath, { force: true }).catch(() => undefined);
+  }
+}
+
+function runFfmpeg(inputPath: string, outputPath: string, outputArgs?: string[]) {
   return new Promise<void>((resolve, reject) => {
     const process = spawn("ffmpeg", [
       "-y",
       "-i",
       inputPath,
-      "-vn",
-      "-acodec",
-      "libmp3lame",
-      "-ab",
-      "192k",
+      ...(outputArgs ?? ["-vn", "-acodec", "libmp3lame", "-ab", "192k"]),
       outputPath
     ]);
 

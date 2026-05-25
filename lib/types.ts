@@ -62,6 +62,38 @@ export type ReelAnalysis = {
   cautions: string[];
 };
 
+export type DeepReelSegment = {
+  start: number;
+  end: number;
+  title: string;
+  script: string;
+  viewer_storyboard: string;
+  hook_role: string;
+  cut_analysis: string;
+  transition_detail: string;
+  emotion: string;
+};
+
+export type DeepReelAnalysis = {
+  summary: string;
+  target_audience: string;
+  target_emotion: string;
+  storyboard: string[];
+  hook_structure: string[];
+  first_three_seconds: string[];
+  six_success_devices: Array<{
+    title: string;
+    detail: string;
+  }>;
+  shortcomings: string;
+  remake_methods: Array<{
+    title: string;
+    detail: string;
+  }>;
+  segments: DeepReelSegment[];
+  cut_transition_details: string[];
+};
+
 export type GeneratedReel = {
   title: string;
   target_duration_seconds: number;

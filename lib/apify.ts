@@ -1,6 +1,7 @@
 import { scoreReels, summarizeAccount } from "@/lib/analysis";
 import { demoAccount, demoReels } from "@/lib/demo-data";
 import { env } from "@/lib/env";
+import type { TranscriptionSegment } from "@/lib/transcription";
 import type { CompetitorAccount, CompetitorReel } from "@/lib/types";
 
 type ApifyRunResponse = {
@@ -12,6 +13,12 @@ type ApifyRunResponse = {
 };
 
 type ApifyDatasetItem = Record<string, unknown>;
+
+export type ApifyTranscriptResult = {
+  text: string;
+  segments: TranscriptionSegment[];
+  source: "apify";
+};
 
 const RECENT_DAYS = 30;
 
@@ -103,6 +110,143 @@ export async function getApifyDataset(datasetId: string) {
 
   const items = (await response.json()) as ApifyDatasetItem[];
   return normalizeScrapeResult(items, "runtime-project", inferHandle(items));
+}
+
+export async function getInstagramTranscriptFromApify(reelUrl: string): Promise<ApifyTranscriptResult | null> {
+  if (!env.apifyToken || !reelUrl) return null;
+
+  const actorId = "crawlerbros/instagram-transcript-scraper";
+  const response = await fetch(
+    `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${env.apifyToken}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(buildTranscriptActorInput(actorId, reelUrl)),
+      cache: "no-store"
+    }
+  );
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Apify transcript 실행 실패: ${response.status} ${detail.slice(0, 400)}`);
+  }
+
+  const items = (await response.json()) as ApifyDatasetItem[];
+  const parsed = parseTranscriptItems(items);
+  if (!parsed.text) return null;
+  return { ...parsed, source: "apify" };
+}
+
+function buildTranscriptActorInput(actorId: string, reelUrl: string) {
+  if (actorId.includes("truefetch/instagram-to-text")) {
+    return {
+      video_url: reelUrl,
+      language: "ko"
+    };
+  }
+
+  return {
+    videoUrls: [reelUrl],
+    urls: [reelUrl],
+    directUrls: [reelUrl],
+    url: reelUrl,
+    language: "ko",
+    transcriptionMethod: "auto",
+    includeTimestamps: true
+  };
+}
+
+function parseTranscriptItems(items: ApifyDatasetItem[]): { text: string; segments: TranscriptionSegment[] } {
+  const firstWithTranscript = items.find((item) => extractTranscriptText(item));
+  if (!firstWithTranscript) return { text: "", segments: [] };
+
+  const text = extractTranscriptText(firstWithTranscript);
+  const segments = extractTranscriptSegments(firstWithTranscript);
+  return { text, segments };
+}
+
+function extractTranscriptText(item: unknown): string {
+  if (!item || typeof item !== "object") return "";
+  const record = item as Record<string, unknown>;
+  const direct = pickString(record, [
+    "transcript",
+    "transcription",
+    "text",
+    "plainText",
+    "transcriptText",
+    "subtitle",
+    "subtitles",
+    "captionText"
+  ]);
+  if (direct) return direct;
+
+  for (const key of ["result", "data", "output", "video", "reel"]) {
+    const nested = record[key];
+    const nestedText = extractTranscriptText(nested);
+    if (nestedText) return nestedText;
+  }
+
+  return "";
+}
+
+function extractTranscriptSegments(item: unknown): TranscriptionSegment[] {
+  if (!item || typeof item !== "object") return [];
+  const record = item as Record<string, unknown>;
+  const candidateKeys = [
+    "segments",
+    "transcriptSegments",
+    "timestampedTranscript",
+    "timestamps",
+    "words",
+    "captions",
+    "subtitles"
+  ];
+
+  for (const key of candidateKeys) {
+    const value = record[key];
+    if (Array.isArray(value)) {
+      const segments = value.map(normalizeTranscriptSegment).filter(Boolean) as TranscriptionSegment[];
+      if (segments.length) return segments;
+    }
+  }
+
+  for (const key of ["result", "data", "output", "video", "reel"]) {
+    const nested = extractTranscriptSegments(record[key]);
+    if (nested.length) return nested;
+  }
+
+  return [];
+}
+
+function normalizeTranscriptSegment(value: unknown): TranscriptionSegment | null {
+  if (!value || typeof value !== "object") return null;
+  const item = value as Record<string, unknown>;
+  const text = pickString(item, ["text", "transcript", "caption", "sentence", "word"]);
+  if (!text) return null;
+
+  const start = pickNumber(item, ["start", "startTime", "start_time", "from", "offset"]) ?? parseTimestamp(item.start);
+  const end =
+    pickNumber(item, ["end", "endTime", "end_time", "to"]) ??
+    parseTimestamp(item.end) ??
+    (typeof start === "number" ? start + (pickNumber(item, ["duration", "durationSeconds"]) ?? 2) : null);
+
+  if (typeof start !== "number" || typeof end !== "number") return null;
+  return {
+    start: Math.max(0, start),
+    end: Math.max(start + 0.1, end),
+    text
+  };
+}
+
+function parseTimestamp(value: unknown) {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return null;
+  if (/^\d+(\.\d+)?$/.test(value)) return Number(value);
+  const parts = value.split(":").map(Number);
+  if (parts.some(Number.isNaN)) return null;
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return null;
 }
 
 export function normalizeScrapeResult(

@@ -1,11 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
+  Brain,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock3,
+  Database,
   ExternalLink,
   Heart,
   ImageIcon,
@@ -13,6 +16,7 @@ import {
   Play,
   RefreshCw,
   Search,
+  Trash2,
   Video,
   XCircle,
   type LucideIcon
@@ -33,6 +37,14 @@ type ProgressEvent = {
   state: StepState;
 };
 
+type SavedRun = {
+  id: string;
+  target: string;
+  instagram_handle?: string | null;
+  profile_url?: string | null;
+  created_at?: string;
+};
+
 const terminalStatuses = new Set(["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"]);
 
 export function AccountAnalyzer() {
@@ -41,15 +53,24 @@ export function AccountAnalyzer() {
   const [account, setAccount] = useState<CompetitorAccount | null>(null);
   const [recent, setRecent] = useState<CompetitorReel[]>([]);
   const [topContent, setTopContent] = useState<CompetitorReel[]>([]);
+  const [savedRuns, setSavedRuns] = useState<SavedRun[]>([]);
+  const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState("");
   const [events, setEvents] = useState<ProgressEvent[]>([
     {
       time: currentTime(),
       label: "인스타그램 계정 주소를 입력하세요.",
-      detail: "최근 30일 게시물과 릴스 중 반응이 좋은 콘텐츠 10개를 정리합니다.",
+      detail: "최근 30일 게시물과 릴스 중 반응이 좋은 콘텐츠 10개를 정리하고 Supabase에 저장합니다.",
       state: "idle"
     }
   ]);
   const [isPending, setIsPending] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingSaved, setIsLoadingSaved] = useState(false);
+
+  useEffect(() => {
+    void loadSavedRuns();
+  }, []);
 
   const totals = useMemo(
     () => ({
@@ -65,12 +86,93 @@ export function AccountAnalyzer() {
     setEvents((previous) => [{ time: currentTime(), label, detail, state }, ...previous].slice(0, 12));
   }
 
+  async function loadSavedRuns() {
+    try {
+      const response = await fetch("/api/account-analyzer/saved", { cache: "no-store" });
+      const payload = await parseResponse(response);
+      setSavedRuns(payload.runs ?? []);
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "저장 목록을 불러오지 못했습니다.");
+    }
+  }
+
+  async function saveCurrentAnalysis(input?: {
+    target: string;
+    account: CompetitorAccount | null;
+    recent: CompetitorReel[];
+    topContent: CompetitorReel[];
+  }) {
+    const payload = input ?? { target, account, recent, topContent };
+    if (!payload.topContent.length) return null;
+
+    setIsSaving(true);
+    try {
+      const response = await fetch("/api/account-analyzer/saved", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const result = await parseResponse(response);
+      setActiveSavedId(result.run?.id ?? null);
+      setSaveMessage("Supabase에 저장했습니다.");
+      await loadSavedRuns();
+      return result.run as SavedRun;
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "Supabase 저장에 실패했습니다.");
+      return null;
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function loadSavedRun(runId: string) {
+    setIsLoadingSaved(true);
+    setSaveMessage("");
+    try {
+      const response = await fetch(`/api/account-analyzer/saved/${encodeURIComponent(runId)}`, { cache: "no-store" });
+      const payload = await parseResponse(response);
+      const run = payload.run;
+      setActiveSavedId(run.id);
+      setTarget(run.target ?? "");
+      setAccount(run.account ?? null);
+      setRecent(run.recent ?? []);
+      setTopContent(run.topContent ?? []);
+      setStatus("저장본");
+      setEvents([
+        {
+          time: currentTime(),
+          label: "Supabase 저장본을 불러왔습니다.",
+          detail: `${run.instagram_handle ? `@${run.instagram_handle}` : run.target} · ${formatSavedDate(run.created_at)}`,
+          state: "success"
+        }
+      ]);
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "저장본을 불러오지 못했습니다.");
+    } finally {
+      setIsLoadingSaved(false);
+    }
+  }
+
+  async function deleteSavedRun(runId: string) {
+    try {
+      const response = await fetch(`/api/account-analyzer/saved/${encodeURIComponent(runId)}`, { method: "DELETE" });
+      await parseResponse(response);
+      if (activeSavedId === runId) setActiveSavedId(null);
+      setSaveMessage("저장본을 삭제했습니다.");
+      await loadSavedRuns();
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "저장본 삭제에 실패했습니다.");
+    }
+  }
+
   async function runAnalysis() {
     setIsPending(true);
     setStatus("RUNNING");
     setAccount(null);
     setRecent([]);
     setTopContent([]);
+    setActiveSavedId(null);
+    setSaveMessage("");
     setEvents([]);
 
     try {
@@ -113,12 +215,21 @@ export function AccountAnalyzer() {
         body: JSON.stringify({ datasetId: finalDatasetId ?? "demo-dataset" })
       });
       const resultPayload = await parseResponse(resultResponse);
+      const nextAccount = resultPayload.account ?? null;
+      const nextRecent = resultPayload.recent ?? [];
+      const nextTopContent = resultPayload.topContent ?? [];
 
-      setAccount(resultPayload.account ?? null);
-      setRecent(resultPayload.recent ?? []);
-      setTopContent(resultPayload.topContent ?? []);
+      setAccount(nextAccount);
+      setRecent(nextRecent);
+      setTopContent(nextTopContent);
       setStatus("완료");
-      pushEvent("계정 분석이 완료되었습니다.", "success", `TOP ${resultPayload.topContent?.length ?? 0}개 콘텐츠`);
+      pushEvent("계정 분석이 완료되었습니다.", "success", `TOP ${nextTopContent.length}개 콘텐츠`);
+      await saveCurrentAnalysis({
+        target: normalizedTarget,
+        account: nextAccount,
+        recent: nextRecent,
+        topContent: nextTopContent
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "알 수 없는 오류";
       setStatus("ERROR");
@@ -136,7 +247,7 @@ export function AccountAnalyzer() {
           <h1 className="text-3xl font-bold">계정분석기</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
             인스타그램 계정 주소를 넣으면 최근 30일 게시물과 릴스에서 반응이 가장 좋은 콘텐츠 10개를
-            인스타그램 피드처럼 볼 수 있게 정리합니다.
+            Supabase에 저장하고 나중에 다시 볼 수 있게 정리합니다.
           </p>
         </div>
         <div className="flex w-full gap-2 md:w-[520px]">
@@ -154,6 +265,55 @@ export function AccountAnalyzer() {
           </Button>
         </div>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>저장된 분석</CardTitle>
+          <CardDescription>Supabase에 저장된 계정분석 결과를 다시 불러옵니다.</CardDescription>
+        </CardHeader>
+        <div className="space-y-3">
+          {saveMessage ? <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">{saveMessage}</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => void loadSavedRuns()} disabled={isLoadingSaved}>
+              {isLoadingSaved ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+              목록 새로고침
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void saveCurrentAnalysis()}
+              disabled={isSaving || !topContent.length}
+            >
+              {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+              현재 결과 저장
+            </Button>
+          </div>
+          {savedRuns.length ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {savedRuns.map((run) => (
+                <div
+                  key={run.id}
+                  className={`rounded-md border bg-white p-3 ${activeSavedId === run.id ? "border-primary" : ""}`}
+                >
+                  <button type="button" className="block w-full text-left" onClick={() => void loadSavedRun(run.id)}>
+                    <p className="truncate font-semibold">{run.instagram_handle ? `@${run.instagram_handle}` : run.target}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{formatSavedDate(run.created_at)}</p>
+                  </button>
+                  <div className="mt-3 flex justify-end">
+                    <Button variant="ghost" size="sm" onClick={() => void deleteSavedRun(run.id)}>
+                      <Trash2 className="h-4 w-4" />
+                      삭제
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground">
+              아직 저장된 분석이 없습니다. 계정을 분석하면 자동으로 저장됩니다.
+            </div>
+          )}
+        </div>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-5">
         <Metric label="상태" value={status} />
@@ -214,10 +374,19 @@ export function AccountAnalyzer() {
 }
 
 function FeedCard({ item, rank }: { item: CompetitorReel; rank: number }) {
+  const router = useRouter();
   const media = getMediaItems(item);
   const [activeIndex, setActiveIndex] = useState(0);
   const active = media[activeIndex];
   const isVideo = active?.type === "video";
+  const canAnalyze = rank <= 3 && Boolean(item.video_url || item.media_items?.some((mediaItem) => mediaItem.type === "video"));
+
+  function openAnalysis() {
+    const key = `account-analyzer:reel:${item.id}`;
+    window.sessionStorage.setItem(key, JSON.stringify(item));
+    window.sessionStorage.setItem("account-analyzer:last-reel", JSON.stringify(item));
+    router.push(`/account-analyzer/reels/${encodeURIComponent(item.id)}`);
+  }
 
   return (
     <article className="overflow-hidden rounded-lg border bg-white shadow-sm">
@@ -305,6 +474,17 @@ function FeedCard({ item, rank }: { item: CompetitorReel; rank: number }) {
             인스타그램에서 보기
           </a>
         </div>
+        {canAnalyze ? (
+          <Button className="w-full" onClick={openAnalysis}>
+            <Brain className="h-4 w-4" />
+            영상분석
+          </Button>
+        ) : rank <= 3 ? (
+          <Button className="w-full" variant="outline" disabled>
+            <Brain className="h-4 w-4" />
+            영상 URL 없음
+          </Button>
+        ) : null}
       </div>
     </article>
   );
@@ -355,6 +535,16 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "게시일 정보 없음";
   return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium" }).format(date);
+}
+
+function formatSavedDate(value?: string | null) {
+  if (!value) return "저장 시간 없음";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "저장 시간 없음";
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(date);
 }
 
 function currentTime() {
