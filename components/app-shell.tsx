@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { BarChart3, FolderKanban } from "lucide-react";
+import { BarChart3, FolderKanban, Search } from "lucide-react";
 import { env, hasSupabaseAdminEnv } from "@/lib/env";
 
 const nav = [
   { href: "/dashboard", label: "대시보드", icon: BarChart3 },
+  { href: "/account-analyzer", label: "계정분석기", icon: Search },
   { href: "/projects", label: "프로젝트", icon: FolderKanban }
 ];
 
@@ -11,7 +12,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const supabaseConnected = hasSupabaseAdminEnv();
   const statusText = supabaseConnected
     ? env.authRequired
-      ? "Supabase 연결됨 · 로그인 저장 모드"
+      ? "Supabase 연결됨 · 로그인 보호 모드"
       : "Supabase 연결됨 · 로그인 없는 분석 모드"
     : "Supabase 미연결 · 데모 데이터 모드";
 

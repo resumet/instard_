@@ -89,6 +89,7 @@ function toReelInsertPayload(reel: CompetitorReel, competitorAccountId: string) 
   const {
     id: _id,
     competitor_account_id: _competitorAccountId,
+    media_items: _mediaItems,
     ...insertPayload
   } = reel;
 

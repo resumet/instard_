@@ -32,6 +32,11 @@ export type CompetitorReel = {
   reel_url: string;
   shortcode: string;
   media_type?: "post" | "reel" | "video" | "carousel";
+  media_items?: Array<{
+    type: "image" | "video";
+    url: string;
+    thumbnail_url?: string | null;
+  }>;
   caption: string;
   hashtags: string[];
   thumbnail_url?: string | null;

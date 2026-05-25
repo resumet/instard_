@@ -6,6 +6,7 @@ export function getRecentTopContent(reels: CompetitorReel[], limit = 10) {
 
   return {
     recent,
+    topContent: sorted.slice(0, limit),
     topReelsOverall: sorted
       .filter((item) => isReelLike(item))
       .slice(0, 3),

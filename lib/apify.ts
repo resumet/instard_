@@ -161,6 +161,7 @@ function normalizeItem(item: ApifyDatasetItem, index: number) {
   const shortcode = pickString(item, ["shortCode", "shortcode", "id"]) ?? `post-${index}`;
   const media_type = inferMediaType(item);
   const viewCount = pickNumber(item, ["videoViewCount", "videoPlayCount", "viewCount", "views", "plays"]) ?? 0;
+  const mediaItems = extractMediaItems(item);
 
   return {
     id: `reel-${shortcode}`,
@@ -168,10 +169,11 @@ function normalizeItem(item: ApifyDatasetItem, index: number) {
     reel_url: url,
     shortcode,
     media_type,
+    media_items: mediaItems,
     caption,
     hashtags,
-    thumbnail_url: pickString(item, ["thumbnailUrl", "displayUrl", "imageUrl", "image"]),
-    video_url: pickString(item, ["videoUrl", "video_url"]),
+    thumbnail_url: pickString(item, ["thumbnailUrl", "displayUrl", "imageUrl", "image"]) ?? mediaItems[0]?.thumbnail_url ?? (mediaItems[0]?.type === "image" ? mediaItems[0].url : null),
+    video_url: pickString(item, ["videoUrl", "video_url"]) ?? mediaItems.find((media) => media.type === "video")?.url,
     duration_seconds: pickNumber(item, ["videoDuration", "duration", "durationSeconds"]),
     view_count: viewCount,
     like_count: pickNumber(item, ["likesCount", "likeCount", "likes"]) ?? 0,
@@ -188,6 +190,43 @@ function inferMediaType(item: ApifyDatasetItem): "post" | "reel" | "video" | "ca
   if (type === "video" || pickString(item, ["videoUrl", "video_url"])) return "video";
   if (type === "sidecar" || type === "carousel") return "carousel";
   return "post";
+}
+
+function extractMediaItems(item: ApifyDatasetItem) {
+  const media: Array<{ type: "image" | "video"; url: string; thumbnail_url?: string | null }> = [];
+  const addMedia = (type: "image" | "video", url?: string | null, thumbnail_url?: string | null) => {
+    if (!url || media.some((entry) => entry.url === url)) return;
+    media.push({ type, url, thumbnail_url });
+  };
+
+  addMedia("video", pickString(item, ["videoUrl", "video_url"]), pickString(item, ["thumbnailUrl", "displayUrl"]));
+  addMedia("image", pickString(item, ["displayUrl", "imageUrl", "image", "thumbnailUrl"]));
+
+  for (const key of ["images", "displayUrls", "imageUrls"]) {
+    const values = item[key];
+    if (Array.isArray(values)) {
+      values.forEach((value) => {
+        if (typeof value === "string") addMedia("image", value);
+        if (value && typeof value === "object") {
+          const mediaObject = value as ApifyDatasetItem;
+          addMedia("image", pickString(mediaObject, ["url", "displayUrl", "imageUrl", "src"]));
+        }
+      });
+    }
+  }
+
+  const childPosts = item.childPosts ?? item.children ?? item.sidecarChildren;
+  if (Array.isArray(childPosts)) {
+    childPosts.forEach((child) => {
+      if (!child || typeof child !== "object") return;
+      const childItem = child as ApifyDatasetItem;
+      const thumbnail = pickString(childItem, ["thumbnailUrl", "displayUrl", "imageUrl"]);
+      addMedia("video", pickString(childItem, ["videoUrl", "video_url"]), thumbnail);
+      addMedia("image", pickString(childItem, ["displayUrl", "imageUrl", "image", "thumbnailUrl"]));
+    });
+  }
+
+  return media;
 }
 
 function isWithinRecentDays(value: string | null | undefined, days: number) {

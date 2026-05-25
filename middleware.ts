@@ -13,6 +13,7 @@ export async function middleware(request: NextRequest) {
   const authRequired = process.env.AUTH_REQUIRED === "true";
   const isDashboardRoute =
     request.nextUrl.pathname.startsWith("/dashboard") ||
+    request.nextUrl.pathname.startsWith("/account-analyzer") ||
     request.nextUrl.pathname.startsWith("/projects");
 
   if (!authRequired || !supabaseUrl || !supabaseAnonKey || !isDashboardRoute) {
@@ -48,5 +49,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/projects/:path*"]
+  matcher: ["/dashboard/:path*", "/account-analyzer/:path*", "/projects/:path*"]
 };
